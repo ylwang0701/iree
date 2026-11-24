@@ -20,6 +20,7 @@
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Analysis/SliceAnalysis.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Linalg/Utils/Utils.h"
 #include "mlir/Interfaces/DestinationStyleOpInterface.h"
 #include "mlir/Interfaces/IndexingMapOpInterface.h"
 #include "mlir/Interfaces/TilingInterface.h"
@@ -612,6 +613,11 @@ checkDispatchForVectorDistribution(Operation *parentOp) {
     if (linalgOp && linalg::isaConvolutionOpInterface(linalgOp)) {
       return failure();
     }
+    // Require vectorizable indexing maps for both reductions and producers.
+    // Match the generic vectorizer's check, which allows constant zeros.
+    if (linalgOp && !linalg::allIndexingsAreProjectedPermutation(linalgOp)) {
+      return failure();
+    }
     if (hasReductionIterator(op)) {
       if (linalgOp && failed(checkSingleCombiner(linalgOp))) {
         containsValidReductionOp = false;
@@ -662,10 +668,9 @@ checkDispatchForVectorDistribution(Operation *parentOp) {
       // Check whether the op operand is not reduced and producer of that
       // operand is not a reduction op.
       auto reductionDims = getOpReductionDims(computeOp);
-      bool isOperandReduced = llvm::any_of(
-          llvm::seq<int>(indexingMap.getNumResults()), [&](int val) {
-            return reductionDims.contains(indexingMap.getDimPosition(val));
-          });
+      bool isOperandReduced = llvm::any_of(reductionDims, [&](int64_t dim) {
+        return indexingMap.isFunctionOfDim(dim);
+      });
       if (isOperandReduced && hasReductionIterator(producer)) {
         return failure();
       }
